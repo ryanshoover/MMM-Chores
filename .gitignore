@@ -3,3 +3,6 @@ data.json
 rewards.json
 # Ignore node_modules
 node_modules
+
+# Ignore backup files
+*.bak

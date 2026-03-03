@@ -145,6 +145,42 @@
 /* Split by Person View */
 .MMM-Chores .chores-split-view {
   width: 100%;
+  position: relative;
+}
+
+/* Admin button - small and subtle */
+.MMM-Chores .admin-button {
+  position: absolute;
+  bottom: 5px;
+  right: 5px;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.15);
+  color: var(--color-text);
+  border-radius: 15px;
+  font-size: 0.75em;
+  font-weight: 500;
+  cursor: pointer;
+  border-color: var(--color-accent-light);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+  z-index: 100;
+  backdrop-filter: blur(10px);
+}
+
+.MMM-Chores .admin-button:hover {
+  background: rgba(255, 255, 255, 0.25);
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+}
+
+.MMM-Chores .admin-button:active {
+  transform: scale(0.95);
+}
+
+.MMM-Chores .admin-button .admin-icon {
+  font-size: 1em;
+  margin-right: 4px;
 }
 
 .MMM-Chores .person-columns {

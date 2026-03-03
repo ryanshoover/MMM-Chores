@@ -665,6 +665,15 @@ Module.register("MMM-Chores", {
     const wrapper = document.createElement("div");
     wrapper.className = "chores-split-view";
 
+    // Add admin button at the top
+    const adminButton = document.createElement("button");
+    adminButton.className = "admin-button";
+    adminButton.innerHTML = '<span class="admin-icon">⚙️</span> Admin';
+    adminButton.addEventListener("click", () => {
+      window.location.href = `http://localhost:${this.config.adminPort}`;
+    });
+    wrapper.appendChild(adminButton);
+
     // Filter visible tasks
     const visible = this.tasks
       .filter(t => !t.deleted && this.shouldShowTask(t))

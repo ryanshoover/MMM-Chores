@@ -3216,6 +3216,15 @@ themeBtn.addEventListener("click", () => {
   setIcon(theme);
 });
 
+// Back to Mirror button
+const backToMirrorBtn = document.getElementById("backToMirrorBtn");
+if (backToMirrorBtn) {
+  backToMirrorBtn.addEventListener("click", () => {
+    // Navigate back to the MagicMirror (default port 8080)
+    window.location.href = "http://localhost:8080";
+  });
+}
+
 function setIcon(theme) {
   themeIcon.className = theme === "dark"
     ? "bi bi-moon-stars-fill"
