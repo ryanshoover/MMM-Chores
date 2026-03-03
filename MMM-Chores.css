@@ -141,3 +141,174 @@
   max-width: 300px;
   text-align: center;
 }
+
+/* Split by Person View */
+.MMM-Chores .chores-split-view {
+  width: 100%;
+}
+
+.MMM-Chores .person-columns {
+  display: flex;
+  flex-direction: row;
+  gap: 30px;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.MMM-Chores .person-column {
+  flex: 1;
+  min-width: 250px;
+  max-width: 400px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 15px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.MMM-Chores .person-header {
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 3px solid;
+  border-bottom-color: var(--color-accent-light);
+}
+
+.MMM-Chores .person-name {
+  font-size: 1.3em;
+  font-weight: 700;
+  margin-bottom: 5px;
+  text-transform: none;
+  letter-spacing: 0.5px;
+}
+
+.MMM-Chores .person-stats {
+  margin-top: 5px;
+  font-size: 0.9em;
+  opacity: 0.7;
+}
+
+.MMM-Chores .person-column ul {
+  margin-top: 10px;
+}
+
+.MMM-Chores .person-column li {
+  align-items: flex-start;
+  padding: 5px 0;
+}
+
+/* Rewards section styling */
+.MMM-Chores .rewards-section {
+  margin-top: 15px;
+  padding: 12px;
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.15), rgba(255, 193, 7, 0.15));
+  border-radius: 10px;
+  border: 2px solid rgba(255, 193, 7, 0.3);
+}
+
+.MMM-Chores .rewards-header {
+  font-size: 1.2em;
+  font-weight: 700;
+  text-align: center;
+  margin-bottom: 10px;
+  color: #ffa000;
+  animation: pulse-celebration 2s ease-in-out infinite;
+}
+
+@keyframes pulse-celebration {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+.MMM-Chores .redemptions-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.MMM-Chores .redeemed-item {
+  display: flex;
+  align-items: center;
+  padding: 8px;
+  margin: 5px 0;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 8px;
+}
+
+.MMM-Chores .reward-emoji {
+  font-size: 1.5em;
+  margin-right: 10px;
+}
+
+.MMM-Chores .reward-name {
+  font-size: 1.1em;
+  color: #f57c00;
+}
+
+.MMM-Chores .rewards-divider {
+  border: 0;
+  border-top: 2px dashed rgba(255, 193, 7, 0.3);
+  margin: 15px 0;
+}
+
+/* Celebration effects - full screen */
+.chore-celebration {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 9999;
+}
+
+.chore-celebration .confetti {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  top: 0;
+  border-radius: 50%;
+  animation: confetti-fall 2s ease-out forwards;
+  opacity: 1;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.2);
+}
+
+@keyframes confetti-fall {
+  0% {
+    transform: translateY(-20px) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(100vh) rotate(1080deg);
+    opacity: 0;
+  }
+}
+
+.chore-celebration .celebration-emoji {
+  position: absolute;
+  font-size: 5em;
+  animation: emoji-burst 2s ease-out forwards;
+  pointer-events: none;
+  text-shadow: 0 0 20px rgba(255, 255, 255, 0.5);
+}
+
+@keyframes emoji-burst {
+  0% {
+    transform: scale(0) rotate(0deg);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.8) rotate(180deg);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.3) rotate(360deg);
+    opacity: 0;
+  }
+}

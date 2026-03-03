@@ -73,7 +73,9 @@ Module.register("MMM-Chores", {
       volume: 0.7,
       pauseMs: 600,
       fadeMs: 120
-    }
+    },
+    splitByPerson: false,  // Split chores view into separate columns per person
+    personColors: {}       // Optional: map person names to colors for column headers
   },
 
   start() {
@@ -135,7 +137,8 @@ Module.register("MMM-Chores", {
     }
     if (notification === "SETTINGS_UPDATE") {
       const prevAnalytics = this.config.showAnalyticsOnMirror;
-      Object.assign(this.config, payload);
+      // Object.assign(this.config, payload);
+      this.config = {...payload, ...this.config};
       if (payload.levelingEnabled !== undefined) {
         this.config.leveling = this.config.leveling || {};
         this.config.leveling.enabled = payload.levelingEnabled;
@@ -231,6 +234,50 @@ Module.register("MMM-Chores", {
     this.sendSocketNotification("USER_TOGGLE_CHORE", { id: task.id, done });
   },
 
+  showCelebration(element) {
+    // Create full-screen celebration overlay
+    const celebration = document.createElement("div");
+    celebration.className = "chore-celebration";
+
+    // Create more confetti pieces for full screen effect
+    for (let i = 0; i < 30; i++) {
+      const confetti = document.createElement("div");
+      confetti.className = "confetti";
+
+      // Random colors from family palette
+      const colors = ["#e74c3c", "#f39c12", "#2ecc71", "#4a90e2", "#9b59b6", "#ffd93d"];
+      confetti.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+
+      // Random horizontal position across the screen
+      confetti.style.left = Math.random() * 100 + "%";
+
+      // Random animation delay and duration
+      confetti.style.animationDelay = Math.random() * 0.5 + "s";
+      confetti.style.animationDuration = (Math.random() * 0.5 + 1.5) + "s";
+
+      celebration.appendChild(confetti);
+    }
+
+    // Add multiple emoji bursts
+    for (let i = 0; i < 3; i++) {
+      const emoji = document.createElement("div");
+      emoji.className = "celebration-emoji";
+      emoji.innerHTML = ["🎉", "⭐", "✨", "🌟", "💫"][Math.floor(Math.random() * 5)];
+      emoji.style.left = (20 + Math.random() * 60) + "%";
+      emoji.style.top = (30 + Math.random() * 40) + "%";
+      emoji.style.animationDelay = (i * 0.3) + "s";
+      celebration.appendChild(emoji);
+    }
+
+    // Add to body for full-screen effect
+    document.body.appendChild(celebration);
+
+    // Remove after animation
+    setTimeout(() => {
+      celebration.remove();
+    }, 2000);
+  },
+
   handleVoiceAction(action) {
     if (action.type === "TOGGLE_TASK" && action.taskId) {
       const task = this.tasks.find(t => t.id === action.taskId);
@@ -256,6 +303,13 @@ Module.register("MMM-Chores", {
         : "yyyy-mm-dd";
 
     if (result === "") return "";
+
+    if (result === "D") {
+      const date = new Date(yyyy, mm - 1, dd);
+      const day = date.getDay();
+      const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+      return "(" + days[day] + ")";
+    }
 
     // Ersätt både små och stora bokstäver för yyyy, mm, dd
     result = result.replace(/yyyy/gi, yyyy);
@@ -607,7 +661,232 @@ Module.register("MMM-Chores", {
     }
   },
 
+  getDomSplitByPerson() {
+    const wrapper = document.createElement("div");
+    wrapper.className = "chores-split-view";
+
+    // Filter visible tasks
+    const visible = this.tasks
+      .filter(t => !t.deleted && this.shouldShowTask(t))
+      .sort((a, b) => {
+        if (a.done && !b.done) return 1;
+        if (!a.done && b.done) return -1;
+        const da = new Date(a.date);
+        const db = new Date(b.date);
+        if (da < db) return -1;
+        if (da > db) return 1;
+        return (a.order || 0) - (b.order || 0);
+      });
+
+    // Group redemptions by person
+    const showRedeemed = this.config.usePointSystem && this.config.showRedeemedRewards !== false;
+    const pendingRedemptions = showRedeemed
+      ? (this.redemptions || []).filter(r => !r.used).sort((a, b) => new Date(b.redeemed) - new Date(a.redeemed))
+      : [];
+
+    const redemptionsByPerson = {};
+    pendingRedemptions.forEach(red => {
+      if (red.personId) {
+        if (!redemptionsByPerson[red.personId]) {
+          redemptionsByPerson[red.personId] = [];
+        }
+        redemptionsByPerson[red.personId].push(red);
+      }
+    });
+
+    if (visible.length === 0 && pendingRedemptions.length === 0) {
+      const emptyEl = document.createElement("div");
+      emptyEl.className = `${this.config.textMirrorSize} dimmed`;
+      emptyEl.innerHTML = "No tasks to show 🎉";
+      wrapper.appendChild(emptyEl);
+      return wrapper;
+    }
+
+    // Group tasks by person
+    const tasksByPerson = {};
+    const unassigned = [];
+
+    visible.forEach(task => {
+      if (!task.assignedTo) {
+        unassigned.push(task);
+      } else {
+        if (!tasksByPerson[task.assignedTo]) {
+          tasksByPerson[task.assignedTo] = [];
+        }
+        tasksByPerson[task.assignedTo].push(task);
+      }
+    });
+
+    // Create columns for each person
+    const columnsWrapper = document.createElement("div");
+    columnsWrapper.className = "person-columns";
+
+    this.people.forEach(person => {
+      const tasks = tasksByPerson[person.id] || [];
+      const redemptions = redemptionsByPerson[person.id] || [];
+      if (tasks.length === 0 && redemptions.length === 0) return; // Skip people with no tasks or redemptions
+
+      const column = document.createElement("div");
+      column.className = "person-column";
+
+      // Person header with their name and stats
+      const header = document.createElement("div");
+      header.className = "person-header";
+
+      const personColor = this.config.personColors[person.name];
+      if (personColor) {
+        header.style.borderBottomColor = personColor;
+      }
+
+      const nameEl = document.createElement("div");
+      nameEl.className = "person-name bright";
+      nameEl.textContent = person.name;
+      if (personColor) {
+        nameEl.style.color = personColor;
+      }
+      header.appendChild(nameEl);
+
+      // Show level or points
+      const statsEl = document.createElement("div");
+      statsEl.className = "person-stats xsmall dimmed";
+      if (this.config.usePointSystem && person.points !== undefined) {
+        statsEl.innerHTML = `🪙 ${person.points} coins`;
+      } else if (person.level) {
+        statsEl.innerHTML = `Level ${person.level} • ${person.title || ''}`;
+      }
+      if (statsEl.innerHTML) {
+        header.appendChild(statsEl);
+      }
+
+      column.appendChild(header);
+
+      // Task list for this person
+      if (tasks.length > 0) {
+        const ul = document.createElement("ul");
+        ul.className = "normal";
+
+        tasks.forEach(task => {
+          const li = document.createElement("li");
+          li.className = `${this.config.textMirrorSize}${task.done ? " task-done" : ""}`;
+
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.checked = task.done;
+          cb.style.marginRight = "8px";
+          cb.addEventListener("change", () => {
+            if (cb.checked && !task.done) {
+              this.showCelebration(li);
+            }
+            li.classList.add("moving");
+            setTimeout(() => this.toggleDone(task, cb.checked), 200);
+          });
+          li.appendChild(cb);
+
+          const dateText = this.formatDate(task.date);
+          const text = document.createTextNode(`${task.name} ${dateText}`);
+          li.appendChild(text);
+
+          ul.appendChild(li);
+        });
+
+        column.appendChild(ul);
+      }
+
+      // Show redeemed rewards for this person (below tasks)
+      if (redemptions.length > 0) {
+        // Add divider between tasks and rewards if there are tasks
+        if (tasks.length > 0) {
+          const divider = document.createElement("hr");
+          divider.className = "rewards-divider";
+          column.appendChild(divider);
+        }
+
+        const rewardsSection = document.createElement("div");
+        rewardsSection.className = "rewards-section";
+
+        const rewardsHeader = document.createElement("div");
+        rewardsHeader.className = "rewards-header";
+        rewardsHeader.innerHTML = "🎉 Rewards! 🎉";
+        rewardsSection.appendChild(rewardsHeader);
+
+        const redemptionsUl = document.createElement("ul");
+        redemptionsUl.className = "normal redemptions-list";
+
+        redemptions.forEach(red => {
+          const li = document.createElement("li");
+          li.className = `${this.config.textMirrorSize} redeemed-item`;
+
+          const emoji = document.createElement("span");
+          emoji.className = "reward-emoji";
+          emoji.textContent = "🎁";
+
+          const rewardEl = document.createElement("strong");
+          rewardEl.className = "reward-name";
+          rewardEl.textContent = red.rewardName || "";
+
+          const space = document.createTextNode("\u00a0");
+          li.append(emoji, space, rewardEl);
+          redemptionsUl.appendChild(li);
+        });
+
+        rewardsSection.appendChild(redemptionsUl);
+        column.appendChild(rewardsSection);
+      }
+
+      columnsWrapper.appendChild(column);
+    });
+
+    // Add unassigned tasks if any
+    if (unassigned.length > 0) {
+      const column = document.createElement("div");
+      column.className = "person-column";
+
+      const header = document.createElement("div");
+      header.className = "person-header";
+      header.innerHTML = '<div class="person-name dimmed">Unassigned</div>';
+      column.appendChild(header);
+
+      const ul = document.createElement("ul");
+      ul.className = "normal";
+
+      unassigned.forEach(task => {
+        const li = document.createElement("li");
+        li.className = `${this.config.textMirrorSize}${task.done ? " task-done" : ""}`;
+
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = task.done;
+        cb.style.marginRight = "8px";
+        cb.addEventListener("change", () => {
+          if (cb.checked && !task.done) {
+            this.showCelebration(li);
+          }
+          li.classList.add("moving");
+          setTimeout(() => this.toggleDone(task, cb.checked), 200);
+        });
+        li.appendChild(cb);
+
+        const dateText = this.formatDate(task.date);
+        const text = document.createTextNode(`${task.name} ${dateText}`);
+        li.appendChild(text);
+
+        ul.appendChild(li);
+      });
+
+      column.appendChild(ul);
+      columnsWrapper.appendChild(column);
+    }
+
+    wrapper.appendChild(columnsWrapper);
+    return wrapper;
+  },
+
   getDom() {
+    // Use split view if enabled
+    if (this.config.splitByPerson) {
+      return this.getDomSplitByPerson();
+    }
+
     const wrapper = document.createElement("div");
 
     // Voice Assistant UI
@@ -734,6 +1013,9 @@ Module.register("MMM-Chores", {
       cb.checked = task.done;
       cb.style.marginRight = "8px";
       cb.addEventListener("change", () => {
+        if (cb.checked && !task.done) {
+          this.showCelebration(li);
+        }
         li.classList.add("moving");
         setTimeout(() => this.toggleDone(task, cb.checked), 200);
       });
