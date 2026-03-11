@@ -70,6 +70,7 @@ function findPersonIdForUsername(username) {
 let tasks = [];
 let people = [];
 let analyticsBoards = [];
+let recurringCompletions = [];
 let coinStore = {
   settings: {
     useCoinSystem: false,
@@ -122,6 +123,7 @@ function applyLoadedData(json, sourceLabel = "data.json") {
   legacyCoinState = legacyCoinState || { rewards: [], redemptions: [], settings: {}, peopleCoins: {} };
   const legacyPeopleCoins = legacyCoinState.peopleCoins || {};
   tasks = json.tasks || [];
+  recurringCompletions = Array.isArray(json.recurringCompletions) ? json.recurringCompletions : [];
   if (tasks.some(t => t.order !== undefined)) {
     tasks.sort((a, b) => {
       if (a.deleted && !b.deleted) return 1;
@@ -345,6 +347,261 @@ function compareTasksForOrdering(a, b) {
   return idA - idB;
 }
 
+function isRecurringTemplateTask(task) {
+  return Boolean(task && !task.deleted && task.recurring && task.recurring !== "none");
+}
+
+function getRecurringCompletionKey(taskId, occurrenceDate) {
+  return `${taskId}|${occurrenceDate}`;
+}
+
+function getRecurringCompletionMap(taskId) {
+  const map = new Map();
+  recurringCompletions.forEach(entry => {
+    if (!entry || entry.taskId !== taskId || !entry.occurrenceDate) return;
+    map.set(entry.occurrenceDate, entry);
+  });
+  return map;
+}
+
+function getLocalDateKey(date = new Date()) {
+  return getLocalISO(date).slice(0, 10);
+}
+
+function parseLocalDate(dateStr) {
+  if (typeof dateStr !== "string") return new Date(dateStr);
+  const parts = dateStr.split("-").map(Number);
+  if (parts.length !== 3 || parts.some(part => Number.isNaN(part))) {
+    return new Date(dateStr);
+  }
+  return new Date(parts[0], parts[1] - 1, parts[2]);
+}
+
+function getCurrentRecurringOccurrence(task, today = getLocalDateKey()) {
+  if (!isRecurringTemplateTask(task) || !task.date) return null;
+
+  const startDate = normalizeRecurringStartDate(task.date, task.recurring);
+  if (!startDate) return null;
+
+  const completions = getRecurringCompletionMap(task.id);
+  let occurrence = startDate;
+  let latestOccurrence = null;
+  let safety = 0;
+
+  while (occurrence <= today && safety < 5000) {
+    latestOccurrence = occurrence;
+    const nextOccurrence = getNextDate(occurrence, task.recurring);
+    if (!nextOccurrence || nextOccurrence === occurrence) {
+      break;
+    }
+    if (nextOccurrence > today) {
+      break;
+    }
+    occurrence = nextOccurrence;
+    safety += 1;
+  }
+
+  if (latestOccurrence) {
+    return {
+      occurrenceDate: latestOccurrence,
+      done: completions.has(latestOccurrence),
+      completion: completions.get(latestOccurrence) || null
+    };
+  }
+
+  return {
+    occurrenceDate: startDate,
+    done: completions.has(startDate),
+    completion: completions.get(startDate) || null
+  };
+}
+
+function buildVisibleTask(task, today = getLocalDateKey()) {
+  if (!isRecurringTemplateTask(task)) {
+    return task;
+  }
+
+  const occurrence = getCurrentRecurringOccurrence(task, today);
+  if (!occurrence) {
+    return {
+      ...task,
+      isRecurringTemplate: true
+    };
+  }
+
+  return {
+    ...task,
+    done: occurrence.done,
+    date: occurrence.occurrenceDate,
+    baseDate: task.date,
+    occurrenceDate: occurrence.occurrenceDate,
+    finished: occurrence.completion?.finished || null,
+    finishedShort: occurrence.completion?.finishedShort || null,
+    awardedPoints: occurrence.completion?.awardedPoints,
+    isRecurringTemplate: true
+  };
+}
+
+function getVisibleTasks(today = getLocalDateKey()) {
+  return tasks.map(task => buildVisibleTask(task, today));
+}
+
+function getCompletedTaskHistory(personId = null) {
+  const oneTime = tasks.filter(task =>
+    task &&
+    !task.deleted &&
+    (!task.recurring || task.recurring === "none") &&
+    task.done &&
+    (!personId || task.assignedTo === personId)
+  );
+
+  const recurring = recurringCompletions.filter(entry =>
+    entry &&
+    (!personId || entry.assignedTo === personId)
+  );
+
+  return oneTime
+    .map(task => ({
+      type: "task",
+      taskId: task.id,
+      date: task.date,
+      finished: task.finished,
+      assignedTo: task.assignedTo,
+      points: Number(task.awardedPoints ?? task.points ?? 1) || 0,
+      name: task.name,
+      deleted: Boolean(task.deleted)
+    }))
+    .concat(
+      recurring.map(entry => ({
+        type: "recurring",
+        taskId: entry.taskId,
+        date: entry.occurrenceDate,
+        finished: entry.finished,
+        assignedTo: entry.assignedTo,
+        points: Number(entry.awardedPoints ?? entry.points ?? 1) || 0,
+        name: entry.name,
+        deleted: false
+      }))
+    );
+}
+
+function upsertRecurringCompletion(task, occurrenceDate, metadata = {}) {
+  if (!task || !occurrenceDate) return null;
+
+  const completion = {
+    taskId: task.id,
+    occurrenceDate,
+    finished: metadata.finished || null,
+    finishedShort: metadata.finishedShort || null,
+    assignedTo: task.assignedTo || null,
+    name: task.name,
+    recurring: task.recurring,
+    points: task.points,
+    awardedPoints: Number(task.points) || 1
+  };
+
+  const existingIndex = recurringCompletions.findIndex(entry =>
+    entry && entry.taskId === task.id && entry.occurrenceDate === occurrenceDate
+  );
+
+  if (existingIndex >= 0) {
+    recurringCompletions[existingIndex] = completion;
+  } else {
+    recurringCompletions.push(completion);
+  }
+
+  return completion;
+}
+
+function removeRecurringCompletion(taskId, occurrenceDate) {
+  const before = recurringCompletions.length;
+  recurringCompletions = recurringCompletions.filter(entry =>
+    !(entry && entry.taskId === taskId && entry.occurrenceDate === occurrenceDate)
+  );
+  return recurringCompletions.length !== before;
+}
+
+function migrateRecurringTasksToTemplates() {
+  const seriesMap = new Map();
+  const oneTimeTasks = [];
+  const completionMap = new Map(
+    recurringCompletions
+      .filter(entry => entry && entry.taskId && entry.occurrenceDate)
+      .map(entry => [getRecurringCompletionKey(entry.taskId, entry.occurrenceDate), entry])
+  );
+
+  tasks.forEach(task => {
+    if (!task) return;
+    if (!task.recurring || task.recurring === "none") {
+      oneTimeTasks.push(task);
+      return;
+    }
+
+    ensureTaskSeriesMetadata(task);
+    const seriesId = getSeriesId(task);
+    if (!seriesMap.has(seriesId)) {
+      seriesMap.set(seriesId, []);
+    }
+    seriesMap.get(seriesId).push(task);
+  });
+
+  if (!seriesMap.size) {
+    return { migratedSeries: 0, changed: false };
+  }
+
+  const migratedRecurringTasks = [];
+
+  seriesMap.forEach(seriesTasks => {
+    const sorted = seriesTasks
+      .slice()
+      .sort((a, b) => compareTasksForOrdering(a, b) || getSortableDateKey(a.date).localeCompare(getSortableDateKey(b.date)));
+    const templateSource = sorted[0];
+    const earliestDate = sorted
+      .map(task => task.date)
+      .filter(Boolean)
+      .sort()[0] || templateSource.date;
+
+    const templateTask = {
+      ...templateSource,
+      date: normalizeRecurringStartDate(earliestDate, templateSource.recurring),
+      done: false,
+      finished: null,
+      finishedShort: null,
+      awardedPoints: undefined,
+      isRecurringTemplate: true
+    };
+
+    sorted.forEach(task => {
+      if (task.done && task.date) {
+        const key = getRecurringCompletionKey(templateTask.id, task.date);
+        if (!completionMap.has(key)) {
+          completionMap.set(key, {
+            taskId: templateTask.id,
+            occurrenceDate: task.date,
+            finished: task.finished || null,
+            finishedShort: task.finishedShort || null,
+            assignedTo: task.assignedTo || null,
+            name: task.name,
+            recurring: task.recurring,
+            points: task.points,
+            awardedPoints: Number(task.awardedPoints ?? task.points ?? 1) || 0
+          });
+        }
+      }
+    });
+
+    migratedRecurringTasks.push(templateTask);
+  });
+
+  recurringCompletions = Array.from(completionMap.values()).sort((a, b) => {
+    if (a.taskId !== b.taskId) return a.taskId - b.taskId;
+    return String(a.occurrenceDate).localeCompare(String(b.occurrenceDate));
+  });
+
+  tasks = oneTimeTasks.concat(migratedRecurringTasks);
+  return { migratedSeries: migratedRecurringTasks.length, changed: migratedRecurringTasks.length > 0 };
+}
+
 function scheduleAutoUpdate() {
   if (!settings.autoUpdate) return;
   if (autoUpdateTimer) clearTimeout(autoUpdateTimer);
@@ -388,7 +645,7 @@ function scheduleReminder(self) {
   reminderTimer = setTimeout(() => {
     reminderTimer = null;
     const todayStr = getLocalISO(new Date()).slice(0, 10);
-    const unfinished = tasks.filter(
+    const unfinished = getVisibleTasks(todayStr).filter(
       t => !t.done && !t.deleted && t.date && t.date <= todayStr
     );
     if (unfinished.length) {
@@ -556,6 +813,7 @@ function sanitizeGeneralSettingsForSave() {
 function buildGeneralDataSnapshot() {
   return {
     tasks,
+    recurringCompletions,
     people: people.map(({ points, ...rest }) => ({ ...rest })),
     analyticsBoards,
     settings: sanitizeGeneralSettingsForSave()
@@ -626,7 +884,7 @@ function computeLevel(config, personId = null) {
   if (lvlConf.enabled === false) return 1;
   const mode = lvlConf.mode || 'years';
   const max = 100;
-  const done = tasks.filter(t => t.done && (!personId || t.assignedTo === personId)).length;
+  const done = getCompletedTaskHistory(personId).length;
   let totalNeeded;
   if (mode === 'chores') {
     totalNeeded = parseFloat(lvlConf.choresToMaxLevel) || 1;
@@ -696,10 +954,6 @@ function broadcastTasks(helper) {
   // deleted and unfinished. Completed tasks remain even if deleted so that
   // historical analytics are consistent across the mirror and the admin page.
   Log.log(`broadcastTasks: start ${tasks.length} tasks`);
-  const autoGenerated = ensureRecurringInstancesUpToToday();
-  if (autoGenerated) {
-    Log.log(`broadcastTasks: generated ${autoGenerated} recurring task instance(s)`);
-  }
   applyTaskOrder();
   tasks.sort((a, b) => {
     if (a.deleted && !b.deleted) return 1;
@@ -707,11 +961,12 @@ function broadcastTasks(helper) {
     return (a.order || 0) - (b.order || 0);
   });
   Log.log(`broadcastTasks: after sort ${tasks.length} tasks`);
-  const analyticsData = tasks.filter(t => !(t.deleted && !t.done));
+  const visibleTasks = getVisibleTasks();
 
+  recomputeAllPersonPoints();
   updatePeopleLevels(helper.config || {});
-  helper.sendSocketNotification("TASKS_UPDATE", tasks);
-  helper.sendSocketNotification("CHORES_DATA", analyticsData);
+  helper.sendSocketNotification("TASKS_UPDATE", visibleTasks);
+  helper.sendSocketNotification("CHORES_DATA", visibleTasks);
   helper.sendSocketNotification("LEVEL_INFO", getLevelInfo(helper.config || {}));
   helper.sendSocketNotification("PEOPLE_UPDATE", people);
   helper.sendSocketNotification("REDEMPTIONS_UPDATE", coinStore.redemptions || []);
@@ -722,7 +977,7 @@ function broadcastTasks(helper) {
 
 function normalizeRecurringStartDate(dateStr, recurring) {
   if (!dateStr || !recurring || recurring === "none") return dateStr;
-  const d = new Date(dateStr);
+  const d = parseLocalDate(dateStr);
   if (Number.isNaN(d.getTime())) return dateStr;
 
   const isWeekend = day => day === 0 || day === 6;
@@ -741,7 +996,7 @@ function normalizeRecurringStartDate(dateStr, recurring) {
 }
 
 function getNextDate(dateStr, recurring) {
-  const d = new Date(dateStr);
+  const d = parseLocalDate(dateStr);
   if (Number.isNaN(d.getTime())) return null;
 
   const addDays = days => d.setDate(d.getDate() + days);
@@ -871,6 +1126,7 @@ function ensureRecurringInstancesUpToToday() {
 }
 
 function performTemporaryDataFix() {
+  const migrationResult = migrateRecurringTasksToTemplates();
   const today = getLocalISO(new Date()).slice(0, 10);
   let duplicatesRemoved = 0;
   let archivedPast = 0;
@@ -956,13 +1212,14 @@ function performTemporaryDataFix() {
   });
 
   return {
+    migratedRecurringSeries: migrationResult.migratedSeries || 0,
     duplicatesRemoved: duplicatesRemoved + globalDuplicatesRemoved,
     recurringDuplicatesRemoved: duplicatesRemoved,
     globalDuplicatesRemoved,
     archivedPast,
     seriesTouched,
     completedPurged,
-    changed: duplicatesRemoved + archivedPast + globalDuplicatesRemoved + completedPurged
+    changed: (migrationResult.changed ? 1 : 0) + duplicatesRemoved + archivedPast + globalDuplicatesRemoved + completedPurged
   };
 }
 
@@ -1005,12 +1262,17 @@ function autoAssignTaskPoints(task, options = {}) {
 }
 
 function calculatePersonPoints(personId) {
-  return tasks
-    .filter(t => t.done && t.assignedTo === personId)
-    .reduce((total, task) => {
-      const value = Number(task.awardedPoints ?? task.points ?? 1) || 0;
-      return total + value;
-    }, 0);
+  return getCompletedTaskHistory(personId).reduce((total, task) => {
+    return total + (Number(task.points) || 0);
+  }, 0);
+}
+
+function recomputeAllPersonPoints() {
+  people = people.map(person => ({
+    ...person,
+    points: calculatePersonPoints(person.id)
+  }));
+  updateCoinStoreFromPeople();
 }
 
 function awardPointsForTask(task) {
@@ -1171,12 +1433,13 @@ module.exports = NodeHelper.create({
           name: p.name,
           points: coinStore.peopleCoins?.[p.id] || 0
         })),
-        tasks: tasks.filter(t => !t.deleted).map(t => ({
+        tasks: getVisibleTasks().filter(t => !t.deleted).map(t => ({
           id: t.id,
           name: t.name,
           assignedTo: t.assignedTo,
           done: t.done,
-          date: t.date
+          date: t.date,
+          occurrenceDate: t.occurrenceDate || null
         }))
       };
 
@@ -1276,11 +1539,11 @@ Return JSON only: {"action": "ACTION_NAME", "params": {...}, "response": "natura
 
         if (task) {
           const isDone = action === "mark_done";
-          this.handleUserToggle({ id: task.id, done: isDone });
+          this.handleUserToggle({ id: task.id, done: isDone, occurrenceDate: task.occurrenceDate || task.date });
           
           return {
             response: `Marked "${task.name}" as ${isDone ? "complete" : "incomplete"}.`,
-            action: { type: "TOGGLE_TASK", taskId: task.id, done: isDone }
+            action: { type: "TOGGLE_TASK", taskId: task.id, done: isDone, occurrenceDate: task.occurrenceDate || task.date }
           };
         }
         return { response: "I couldn't find that task.", action: null };
@@ -1293,9 +1556,7 @@ Return JSON only: {"action": "ACTION_NAME", "params": {...}, "response": "natura
         );
 
         if (person) {
-          const completedCount = context.tasks.filter(t => 
-            t.assignedTo === person.id && t.done
-          ).length;
+          const completedCount = getCompletedTaskHistory(person.id).length;
           
           return {
             response: `${person.name} has ${person.points} coins and has completed ${completedCount} tasks.`,
@@ -1327,7 +1588,7 @@ Return JSON only: {"action": "ACTION_NAME", "params": {...}, "response": "natura
       return res.status(400).json({ success: false, error: "OpenAI token missing in config." });
     }
 
-    const completedCount = tasks.filter(t => t.done === true).length;
+    const completedCount = getCompletedTaskHistory().length;
     const requiredCount = 30;
     if (completedCount < requiredCount) {
       const amountLeft = requiredCount - completedCount;
@@ -1451,13 +1712,13 @@ Return JSON only: {"action": "ACTION_NAME", "params": {...}, "response": "natura
 
   buildPromptFromTasks() {
     // Include all completed tasks, even if they were later deleted
-    const relevantTasks = tasks.filter(t => t.done === true).map(t => ({
-      name:        t.name,
-      assignedTo:  t.assignedTo,
-      date:        t.date,
-      done:        t.done,
-      deleted:     t.deleted || false,
-      created:     t.created
+    const relevantTasks = getCompletedTaskHistory().map(t => ({
+      name: t.name,
+      assignedTo: t.assignedTo,
+      date: t.date,
+      done: true,
+      deleted: t.deleted || false,
+      created: t.finished
     }));
 
     const todayString = new Date().toLocaleDateString("sv-SE", {
@@ -1477,7 +1738,7 @@ Return JSON only: {"action": "ACTION_NAME", "params": {...}, "response": "natura
       });
   },
 
-  async handleUserToggle({ id, done }) {
+  async handleUserToggle({ id, done, occurrenceDate }) {
     try {
       const now = new Date();
       const iso = now.toISOString();
@@ -1486,6 +1747,9 @@ Return JSON only: {"action": "ACTION_NAME", "params": {...}, "response": "natura
         prefix + pad(now.getMonth() + 1) + pad(now.getDate()) + pad(now.getHours()) + pad(now.getMinutes());
 
       const body = { done };
+      if (occurrenceDate) {
+        body.occurrenceDate = occurrenceDate;
+      }
       if (done) {
         body.finished = iso;
         body.finishedShort = stamp("F");
@@ -1674,12 +1938,13 @@ Return JSON only: {"action": "ACTION_NAME", "params": {...}, "response": "natura
     // Return all tasks. Filtering of deleted items is handled client-side so
     // analytics can include completed tasks even after deletion.
     app.get("/api/tasks", (req, res) => {
-      const created = ensureRecurringInstancesUpToToday();
       applyTaskOrder();
-      if (created) {
-        saveData();
+      let visibleTasks = getVisibleTasks();
+      if (req.user && req.user.permission === "regular") {
+        const personId = findPersonIdForUsername(req.user.username);
+        visibleTasks = personId ? visibleTasks.filter(task => task.assignedTo === personId) : [];
       }
-      res.json(tasks);
+      res.json(visibleTasks);
     });
     app.post("/api/tasks", requireTaskWrite, (req, res) => {
       const now = new Date();
@@ -1711,6 +1976,13 @@ Return JSON only: {"action": "ACTION_NAME", "params": {...}, "response": "natura
 
       if (newTask.points === undefined) {
         autoAssignTaskPoints(newTask);
+      }
+      if (newTask.recurring && newTask.recurring !== "none") {
+        newTask.isRecurringTemplate = true;
+        newTask.done = false;
+        delete newTask.finished;
+        delete newTask.finishedShort;
+        delete newTask.awardedPoints;
       }
       Log.log("POST /api/tasks", newTask);
       tasks.push(newTask);
@@ -1782,14 +2054,19 @@ Return JSON only: {"action": "ACTION_NAME", "params": {...}, "response": "natura
       const task = tasks.find(t => t.id === id);
       if (!task) return res.status(404).json({ error: "Task not found" });
 
-      const prevDone = task.done;
       const updates = req.body || {};
+      const isRecurringTemplate = isRecurringTemplateTask(task);
+      const occurrenceDate = updates.occurrenceDate || updates.date || task.date;
+      const prevVisibleTask = isRecurringTemplate ? buildVisibleTask(task) : task;
+      const prevDone = Boolean(prevVisibleTask.done);
       const hasPointsUpdate = Object.prototype.hasOwnProperty.call(updates, "points");
       const hasAutoRuleUpdate = Object.prototype.hasOwnProperty.call(updates, "autoPointsRule");
       const hasNameUpdate = Object.prototype.hasOwnProperty.call(updates, "name");
+      const hasDoneUpdate = Object.prototype.hasOwnProperty.call(updates, "done");
 
       Object.entries(updates).forEach(([key, val]) => {
-        if (key === "points" || key === "autoPointsRule") return;
+        if (key === "points" || key === "autoPointsRule" || key === "occurrenceDate") return;
+        if (isRecurringTemplate && (key === "done" || key === "finished" || key === "finishedShort")) return;
         if (val === undefined || val === null) {
           delete task[key];
         } else if (key === "assignedTo") {
@@ -1825,22 +2102,26 @@ Return JSON only: {"action": "ACTION_NAME", "params": {...}, "response": "natura
       }
       Log.log("PUT /api/tasks/" + id, req.body);
 
-      // Adjust coins when completion status changes
-      if (!prevDone && task.done) {
-        awardPointsForTask(task);
-      } else if (prevDone && !task.done) {
-        revokePointsForTask(task);
-      }
-
-      if (!prevDone && task.done && task.recurring && task.recurring !== "none") {
-        const nextDate = getNextDate(task.date, task.recurring);
-        if (nextDate) {
-          createRecurringInstanceFromTask(task, nextDate);
+      if (isRecurringTemplate && hasDoneUpdate) {
+        if (updates.done) {
+          upsertRecurringCompletion(task, occurrenceDate, {
+            finished: updates.finished || null,
+            finishedShort: updates.finishedShort || null
+          });
+        } else {
+          removeRecurringCompletion(task.id, occurrenceDate);
+        }
+      } else {
+        if (!prevDone && task.done) {
+          awardPointsForTask(task);
+        } else if (prevDone && !task.done) {
+          revokePointsForTask(task);
         }
       }
 
       const ok = broadcastTasks(self);
-      if (!prevDone && task.done) {
+      const completedNow = hasDoneUpdate && !prevDone && Boolean(updates.done);
+      if (completedNow) {
         const assignee = task.assignedTo ? people.find(p => p.id === task.assignedTo) : null;
         const t = getLanguageStrings(settings.language);
         const byText = assignee ? formatTemplate(t.pushoverTaskBy || " by {name}", { name: assignee.name }) : "";
@@ -1851,7 +2132,7 @@ Return JSON only: {"action": "ACTION_NAME", "params": {...}, "response": "natura
         sendPushover(self, settings, completedMsg);
       }
       if (!ok) return res.status(500).json({ error: "Failed to save data" });
-      res.json(task);
+      res.json(isRecurringTemplate ? buildVisibleTask(task) : task);
     });
     app.delete("/api/tasks/:id", requireTaskWrite, (req, res) => {
       const id = parseInt(req.params.id, 10);
@@ -1905,6 +2186,9 @@ Return JSON only: {"action": "ACTION_NAME", "params": {...}, "response": "natura
       }
       const ok = broadcastTasks(self);
       const parts = [];
+      if (result.migratedRecurringSeries) {
+        parts.push(`migrated ${result.migratedRecurringSeries} recurring series`);
+      }
       if (result.recurringDuplicatesRemoved) {
         parts.push(`cleaned ${result.recurringDuplicatesRemoved} series duplicate(s)`);
       }
@@ -2103,7 +2387,7 @@ Return JSON only: {"action": "ACTION_NAME", "params": {...}, "response": "natura
         .slice(0, 15)
         .join("; ");
 
-      const upcomingTasks = tasks
+      const upcomingTasks = getVisibleTasks()
         .filter(t => !t.deleted && !t.done)
         .slice(0, 20)
         .map(t => {

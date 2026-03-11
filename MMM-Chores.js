@@ -231,7 +231,11 @@ Module.register("MMM-Chores", {
   },
 
   toggleDone(task, done) {
-    this.sendSocketNotification("USER_TOGGLE_CHORE", { id: task.id, done });
+    this.sendSocketNotification("USER_TOGGLE_CHORE", {
+      id: task.id,
+      done,
+      occurrenceDate: task.occurrenceDate || task.date
+    });
   },
 
   showCelebration(element) {

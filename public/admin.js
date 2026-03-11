@@ -2494,6 +2494,9 @@ function createTaskElement(task, t, canWrite, canDelete, isCoinSystemActive) {
           updateObj.finished = null;
           updateObj.finishedShort = null;
         }
+        if (task.occurrenceDate) {
+          updateObj.occurrenceDate = task.occurrenceDate;
+        }
         await updateTask(task.id, updateObj);
       });
     } else {
@@ -2539,7 +2542,7 @@ function createTaskElement(task, t, canWrite, canDelete, isCoinSystemActive) {
       dragBtn.className = "btn btn-sm btn-outline-secondary drag-handle";
       dragBtn.innerHTML = '<i class="bi bi-list"></i>';
 
-      if (!task.done) {
+      if (!task.done || (task.recurring && task.recurring !== "none")) {
         const edit = document.createElement("button");
         edit.className = "btn btn-sm btn-outline-secondary";
         edit.title = t.edit;
@@ -2566,7 +2569,7 @@ function openEditModal(task) {
   const personSelect = document.getElementById('editTaskPerson');
   const recurringSelect = document.getElementById('editTaskRecurring');
   if (nameInput) nameInput.value = task.name;
-  if (dateInput) dateInput.value = task.date || '';
+  if (dateInput) dateInput.value = task.baseDate || task.date || '';
   if (personSelect) personSelect.value = task.assignedTo || '';
   if (recurringSelect) recurringSelect.value = task.recurring || 'none';
   if (!editTaskModal) {
