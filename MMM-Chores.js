@@ -262,15 +262,18 @@ Module.register("MMM-Chores", {
       celebration.appendChild(confetti);
     }
 
-    // Add multiple emoji bursts
+    // Add multiple icon bursts
+    const celebrationIcons = ["party-popper.svg", "star.svg", "sparkles.svg", "glowing-star.svg", "dizzy-star.svg"];
     for (let i = 0; i < 3; i++) {
-      const emoji = document.createElement("div");
-      emoji.className = "celebration-emoji";
-      emoji.innerHTML = ["🎉", "⭐", "✨", "🌟", "💫"][Math.floor(Math.random() * 5)];
-      emoji.style.left = (20 + Math.random() * 60) + "%";
-      emoji.style.top = (30 + Math.random() * 40) + "%";
-      emoji.style.animationDelay = (i * 0.3) + "s";
-      celebration.appendChild(emoji);
+      const icon = document.createElement("img");
+      icon.className = "celebration-icon";
+      icon.src = this.file(`img/celebration/${celebrationIcons[Math.floor(Math.random() * celebrationIcons.length)]}`);
+      icon.alt = "";
+      icon.setAttribute("aria-hidden", "true");
+      icon.style.left = (20 + Math.random() * 60) + "%";
+      icon.style.top = (30 + Math.random() * 40) + "%";
+      icon.style.animationDelay = (i * 0.3) + "s";
+      celebration.appendChild(icon);
     }
 
     // Add to body for full-screen effect

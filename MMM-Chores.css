@@ -323,12 +323,13 @@
   }
 }
 
-.chore-celebration .celebration-emoji {
+.chore-celebration .celebration-icon {
   position: absolute;
-  font-size: 5em;
+  width: 5em;
+  height: 5em;
   animation: emoji-burst 2s ease-out forwards;
   pointer-events: none;
-  text-shadow: 0 0 20px rgba(255, 255, 255, 0.5);
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.6));
 }
 
 @keyframes emoji-burst {
